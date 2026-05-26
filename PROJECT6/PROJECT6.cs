@@ -1,7 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.Linq;
+using System.Globalization;
 using System.IO; // Для работы с файлами
+using System.Linq;
 using System.Text.Json; // Для работы с JSON
 
 public class Transaction(string name, decimal amount, string category, DateTime date)
@@ -58,7 +59,6 @@ public class FinanceManager
         }
     }
 
-
     public bool RemoveTransactionByName(string name)
     {
         // Ищем транзакцию (игнорируя регистр)
@@ -80,6 +80,9 @@ class Program
     {
         FinanceManager manager = new FinanceManager();
         manager.LoadFromFile();
+
+        // Актуальный курс доллара для соответствия расчетам
+        decimal dollarCourse = 72m;
 
         while (true)
         {
@@ -113,7 +116,13 @@ class Program
                     break;
 
                 case 2:
-                    Console.WriteLine($"💰 Итого потрачено: {manager.GetTotalSpend()} руб");
+                    decimal totalRub = manager.GetTotalSpend();
+                    decimal totalUsd = totalRub / dollarCourse;
+
+                    string rubString = totalRub.ToString("N2", CultureInfo.InvariantCulture);
+                    string usdString = totalUsd.ToString("N2", CultureInfo.InvariantCulture);
+
+                    Console.WriteLine($"💰 Итого потрачено: {rubString} руб. (${usdString})");
                     break;
 
                 case 3:
@@ -124,21 +133,30 @@ class Program
                     if (foundByCategory.Any())
                     {
                         foreach (var t in foundByCategory)
-                            Console.WriteLine($"- {t.Name}: {t.Amount} руб. [{t.Category}]");
+                        {
+                            string amtString = t.Amount.ToString("N2", CultureInfo.InvariantCulture);
+                            Console.WriteLine($"- {t.Name,-25} | {amtString,13} руб. [{t.Category}]");
+                        }
                     }
                     else Console.WriteLine("Транзакции не найдены.");
                     break;
 
                 case 4:
                     Console.WriteLine("Выход из программы...");
-                    return; // Полностью останавливает метод Main и закрывает программу
+                    return;
 
                 case 5:
                     var all = manager.GetAllTransactions();
                     if (all.Any())
                     {
                         foreach (var t in all)
-                            Console.WriteLine($"{t.Date.ToShortDateString()} | {t.Name,-25} | {t.Amount,8} руб. | {t.Category}");
+                        {
+                            string rubFormat = t.Amount.ToString("N2", CultureInfo.InvariantCulture) + " ₽.";
+                            string usdFormat = $"(${(t.Amount / dollarCourse).ToString("N2", CultureInfo.InvariantCulture)})";
+
+                            // Строго выверенные отступы для идеальной таблицы
+                            Console.WriteLine($"{t.Date.ToShortDateString()} | {t.Name,-25} | {rubFormat,16} | {usdFormat,-13} | {t.Category}");
+                        }
                     }
                     else Console.WriteLine("Список пуст.");
                     break;
@@ -148,7 +166,7 @@ class Program
                     string inputTransaction = Console.ReadLine();
 
                     if (manager.RemoveTransactionByName(inputTransaction))
-                        Console.WriteLine("✅ Транзакция успешно удалена!");
+                        Console.WriteLine("✅ Траснзакция успешно удалена!");
                     else
                         Console.WriteLine("❌ Транзакция с таким названием не найдена.");
                     break;
@@ -172,7 +190,12 @@ class Program
                             {
                                 Console.WriteLine($"\n--- Транзакции за период с {startDate.ToShortDateString()} по {endDate.ToShortDateString()} ---");
                                 foreach (var t in foundByDate)
-                                    Console.WriteLine($"{t.Date.ToShortDateString()} | {t.Name,-25} | {t.Amount,8} руб. | {t.Category}");
+                                {
+                                    string rubFormat = t.Amount.ToString("N2", CultureInfo.InvariantCulture) + " ₽.";
+                                    string usdFormat = $"(${(t.Amount / dollarCourse).ToString("N2", CultureInfo.InvariantCulture)})";
+
+                                    Console.WriteLine($"{t.Date.ToShortDateString()} | {t.Name,-25} | {rubFormat,16} | {usdFormat,-13} | {t.Category}");
+                                }
                             }
                             else Console.WriteLine("За указанный период транзакций не найдено.");
                         }
