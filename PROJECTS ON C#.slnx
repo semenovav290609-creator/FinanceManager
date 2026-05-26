@@ -1,0 +1,13 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Project Path="Project1/Project1.csproj" />
+  <Project Path="Project2/Project2.csproj" />
+  <Project Path="Project3/Project3.csproj" />
+  <Project Path="PROJECT4/Project4.csproj" Id="cb691201-213c-43ec-aa9f-403b839f16d4" />
+  <Project Path="Project5/Project5.csproj" Id="2c7c658d-528d-40a0-a1ad-b256a8851b86" />
+  <Project Path="PROJECT6/Project6.csproj" Id="82d8a026-eec7-457c-a17d-42df9d941e7e" />
+</Solution>
