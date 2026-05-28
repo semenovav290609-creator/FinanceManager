@@ -3,31 +3,40 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
-using System.Net.Security;
 using System.Text.Json;
-using System.Threading.Tasks; // Обязательно для Task
+using System.Threading.Tasks;
+using System.Text.Encodings.Web;
 
-public class Transaction(string name, decimal amount, string category, DateTime date)
+public class Transaction
 {
-    public string Name { get; set; } = name;
-    public decimal Amount { get; set; } = amount;
-    public string Category { get; set; } = category;
-    public DateTime Date { get; set; } = date;
+    public string Name { get; set; }
+    public decimal Amount { get; set; }
+    public string Category { get; set; }
+    public DateTime Date { get; set; }
+
+    public Transaction(string name, decimal amount, string category, DateTime date)
+    {
+        Name = name;
+        Amount = amount;
+        Category = category;
+        Date = date;
+    }
 }
 
 public class FinanceManager
 {
     private List<Transaction> _transactions = new List<Transaction>();
-    private const string FileName = "finance.json";
+    private List<Transaction> _deletedTransactions = new List<Transaction>();
 
-    // Метод стал async Task, так как внутри ждём сохранение
+    private const string FileName = "finance.json";
+    private const string DeletedFileName = "deleted_finance.json";
+
     public async Task AddTransactionAsync(Transaction t)
     {
         _transactions.Add(t);
-        await SaveToFileAsync(); // Ждём асинхронное сохранение
+        await SaveToFileAsync();
     }
 
-    // Синхронные методы работы с памятью остались БЕЗ изменений
     public decimal GetTotalSpend() => _transactions.Sum(x => x.Amount);
 
     public List<Transaction> GetAllTransactions() => _transactions;
@@ -38,34 +47,52 @@ public class FinanceManager
     public List<Transaction> GetTransactionsByDateRange(DateTime start, DateTime end)
          => _transactions.Where(t => t.Date >= start && t.Date <= end).ToList();
 
-    // Асинхронное сохранение на диск
     public async Task SaveToFileAsync()
     {
-        string json = JsonSerializer.Serialize(_transactions, new JsonSerializerOptions { WriteIndented = true });
-        // Используем специальный асинхронный метод записи
+        var options = new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        };
+        string json = JsonSerializer.Serialize(_transactions, options);
         await File.WriteAllTextAsync(FileName, json);
     }
 
-    // Асинхронная загрузка с диска
+    public async Task SaveDeletedToFileAsync()
+    {
+        var options = new JsonSerializerOptions
+        {
+            WriteIndented = true,
+            Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+        };
+        string json = JsonSerializer.Serialize(_deletedTransactions, options);
+        await File.WriteAllTextAsync(DeletedFileName, json);
+    }
+
     public async Task LoadFromFileAsync()
     {
         try
         {
             if (File.Exists(FileName))
             {
-                // Используем асинхронное чтение файла
                 string json = await File.ReadAllTextAsync(FileName);
                 _transactions = JsonSerializer.Deserialize<List<Transaction>>(json) ?? new List<Transaction>();
+            }
+
+            if (File.Exists(DeletedFileName))
+            {
+                string jsonDeleted = await File.ReadAllTextAsync(DeletedFileName);
+                _deletedTransactions = JsonSerializer.Deserialize<List<Transaction>>(jsonDeleted) ?? new List<Transaction>();
             }
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"⚠️ Ошибка при чтении файла: {ex.Message}");
+            Console.WriteLine($"⚠️ Ошибка при чтении файлов: {ex.Message}");
             _transactions = new List<Transaction>();
+            _deletedTransactions = new List<Transaction>();
         }
     }
 
-    // Метод стал асинхронным из-за перезаписи файла внутри
     public async Task<bool> RemoveTransactionByNameAsync(string name)
     {
         var toRemove = _transactions.FirstOrDefault(t => t.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
@@ -73,7 +100,10 @@ public class FinanceManager
         if (toRemove != null)
         {
             _transactions.Remove(toRemove);
-            await SaveToFileAsync(); // Ждём перезапись
+            _deletedTransactions.Add(toRemove);
+
+            await SaveToFileAsync();
+            await SaveDeletedToFileAsync();
             return true;
         }
         return false;
@@ -81,35 +111,76 @@ public class FinanceManager
 
     public async Task ClearAllTransactionsAsync()
     {
-        _transactions.Clear();   // Полностью очищает список в памяти
-        await SaveToFileAsync(); // Перезаписывает файл уже пустым списком
+        _deletedTransactions.AddRange(_transactions);
+        _transactions.Clear();
+
+        await SaveToFileAsync();
+        await SaveDeletedToFileAsync();
+    }
+
+    public void OpenDelTransaction()
+    {
+        if (!_deletedTransactions.Any())
+        {
+            Console.WriteLine("Корзина пуста.");
+            return;
+        }
+
+        for (int i = 0; i < _deletedTransactions.Count; i++)
+        {
+            var t = _deletedTransactions[i];
+            string rubFormat = t.Amount.ToString("N2", CultureInfo.InvariantCulture) + " ₽.";
+            int displayIndex = i + 1;
+            Console.WriteLine($"{displayIndex}. {t.Date.ToShortDateString()} | {t.Name,-25} | {rubFormat,16} | [{t.Category}]");
+        }
+    }
+
+    public async Task ClearDeletedTransactionsAsync()
+    {
+        _deletedTransactions.Clear();
+        await SaveDeletedToFileAsync();
+        Console.WriteLine("🧹 Корзина полностью очищена на диске!");
+    }
+
+    public async Task<bool> RestoreTransactionAsync(int index)
+    {
+        int realIndex = index - 1;
+
+        if (realIndex >= 0 && realIndex < _deletedTransactions.Count)
+        {
+            var target = _deletedTransactions[realIndex];
+
+            _deletedTransactions.RemoveAt(realIndex);
+            _transactions.Add(target);
+
+            await SaveToFileAsync();
+            await SaveDeletedToFileAsync();
+            return true;
+        }
+        return false;
     }
 }
 
 class Program
 {
-    // Главный метод программы теперь async Task
     public static async Task Main(string[] args)
     {
         Console.InputEncoding = Console.OutputEncoding = System.Text.Encoding.Unicode;
 
         FinanceManager manager = new FinanceManager();
-        // Ждём загрузку базы данных при старте
         await manager.LoadFromFileAsync();
 
         decimal dollarCourse = 72m;
 
         while (true)
         {
-            Console.WriteLine("\n--- МЕНЮ ---");
-            Console.WriteLine("1 - Добавить транзакцию");
-            Console.WriteLine("2 - Узнать итоговую сумму");
-            Console.WriteLine("3 - Найти по категории");
-            Console.WriteLine("4 - Выйти");
-            Console.WriteLine("5 - Посмотреть все транзакции");
-            Console.WriteLine("6 - Удалить транзакцию");
-            Console.WriteLine("7 - Открыть транзакции за определённые даты");
-            Console.WriteLine("8 - Удалить все транзакции");
+            Console.WriteLine("\n╔═══════════════════ МЕНЮ МЕНЕДЖЕРА ФИНАНСОВ ═══════════════════╗");
+            Console.WriteLine("║ [1] Добавить     | [5] Посмотреть все   | [9] Открыть корзину   ║");
+            Console.WriteLine("║ [2] Итог (Руб/$) | [3] Найти категории  | [10] Очистить корзину ║");
+            Console.WriteLine("║ [6] Удалить одну | [7] Найти по датам   | [11] Восстановить     ║");
+            Console.WriteLine("║ [8] Удалить ВСЁ  | [4] Выйти из таблицы  ╚══════════════════════╝");
+            Console.Write("  Ваш выбор: ");
+
 
             if (!int.TryParse(Console.ReadLine(), out var result))
             {
@@ -121,15 +192,26 @@ class Program
             {
                 case 1:
                     Console.WriteLine("Введите через запятую: Название, Цена, Категория");
-                    string[] input = Console.ReadLine().Split(",");
+                    string rawInput = Console.ReadLine();
+                    if (string.IsNullOrWhiteSpace(rawInput)) break;
 
-                    if (input.Length == 3 && decimal.TryParse(input[1].Trim(), out decimal price))
+                    string[] parts = rawInput.Split(',');
+
+                    if (parts.Length == 3)
                     {
-                        // Добавили await перед вызовом
-                        await manager.AddTransactionAsync(new Transaction(input[0].Trim(), price, input[2].Trim(), DateTime.Now));
-                        Console.WriteLine("✅ Добавлено и сохранено!");
+                        string nameParam = parts[0].Trim();
+                        string priceStr = parts[1].Trim();
+                        string categoryParam = parts[2].Trim();
+
+                        if (decimal.TryParse(priceStr, out decimal price))
+                        {
+                            Transaction newTrans = new Transaction(nameParam, price, categoryParam, DateTime.Now);
+                            await manager.AddTransactionAsync(newTrans);
+                            Console.WriteLine("✅ Добавлено и сохранено!");
+                        }
+                        else Console.WriteLine("❌ Ошибка: неверный формат цены.");
                     }
-                    else Console.WriteLine("❌ Ошибка: неверный формат ввода.");
+                    else Console.WriteLine("❌ Ошибка: введите 3 значения через запятую.");
                     break;
 
                 case 2:
@@ -180,16 +262,15 @@ class Program
                 case 6:
                     if (!manager.GetAllTransactions().Any())
                     {
-                        Console.WriteLine("❌ Список транзакций пуст. Сначала добавьте хотя бы одну запись.");
+                        Console.WriteLine("❌ Список транзакций пуст.");
                     }
                     else
                     {
                         Console.WriteLine("Введите название транзакции для удаления:");
                         string inputTransaction = Console.ReadLine().Trim();
 
-                        // Добавили await для удаления
-                        if (await manager.RemoveTransactionByNameAsync(inputTransaction)) Console.WriteLine("✅ Транзакция успешно удалена!");
-
+                        if (await manager.RemoveTransactionByNameAsync(inputTransaction))
+                            Console.WriteLine("✅ Транзакция успешно удалена!");
                         else
                             Console.WriteLine("❌ Транзакция с таким названием не найдена.");
                     }
@@ -202,8 +283,11 @@ class Program
 
                     if (dateStrings.Length == 2)
                     {
-                        bool isFirstValid = DateTime.TryParse(dateStrings[0].Trim(), out DateTime startDate);
-                        bool isSecondValid = DateTime.TryParse(dateStrings[1].Trim(), out DateTime endDate);
+                        string firstDateStr = dateStrings[0].Trim();
+                        string secondDateStr = dateStrings[1].Trim();
+
+                        bool isFirstValid = DateTime.TryParse(firstDateStr, out DateTime startDate);
+                        bool isSecondValid = DateTime.TryParse(secondDateStr, out DateTime endDate);
 
                         if (isFirstValid && isSecondValid)
                         {
@@ -232,13 +316,40 @@ class Program
                     Console.WriteLine("Вы уверены, что хотите удалить ВСЕ транзакции? (да/нет)");
                     if (Console.ReadLine().Trim().Equals("да", StringComparison.OrdinalIgnoreCase))
                     {
-                        await manager.ClearAllTransactionsAsync(); // Вызываем метод
+                        await manager.ClearAllTransactionsAsync();
                         Console.WriteLine("🗑️ Все транзакции успешно удалены!");
                     }
-                    else
+                    else Console.WriteLine("Отменено.");
+                    break;
+
+                case 9:
+                    Console.WriteLine("-----Ваши удалённые транзакции-----");
+                    manager.OpenDelTransaction();
+                    break;
+
+                case 10:
+                    Console.WriteLine("⚠️ Вы уверены, что хотите НАВСЕГДА удалить все транзакции из корзины? (да/нет)");
+                    if (Console.ReadLine().Trim().Equals("да", StringComparison.OrdinalIgnoreCase))
                     {
-                        Console.WriteLine("Отменено.");
+                        await manager.ClearDeletedTransactionsAsync();
                     }
+                    else Console.WriteLine("Очистка корзины отменена.");
+                    break;
+
+                case 11:
+                    Console.WriteLine("----- Восстановление транзакции -----");
+                    manager.OpenDelTransaction();
+
+                    Console.WriteLine("Введите номер транзакции, которую хотите восстановить:");
+                    if (int.TryParse(Console.ReadLine(), out int restoreIndex))
+                    {
+                        if (await manager.RestoreTransactionAsync(restoreIndex))
+                        {
+                            Console.WriteLine("✅ Транзакция успешно восстановлена в основной список!");
+                        }
+                        else Console.WriteLine("❌ Ошибка: Транзакции с таким номером нет в корзине.");
+                    }
+                    else Console.WriteLine("❌ Ошибка: Введите корректное число.");
                     break;
 
                 default:
